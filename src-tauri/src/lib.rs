@@ -42,7 +42,7 @@ use tauri::{AppHandle, Emitter, Listener, Manager};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_log::{Builder as LogBuilder, RotationStrategy, Target, TargetKind};
 
-use crate::settings::get_settings;
+use crate::settings::{get_settings, write_settings};
 
 // Global atomic to store the file log level filter
 // We use u8 to store the log::LevelFilter as a number
@@ -166,41 +166,65 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         )
         .show_menu_on_left_click(true)
         .icon_as_template(true)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "settings" => {
-                show_main_window(app);
+        .on_menu_event(|app, event| {
+            let event_id = event.id.as_ref();
+            
+            // Handle model switching events
+            if event_id.starts_with("model_switch_") {
+                let model_id = event_id.trim_start_matches("model_switch_");
+                log::info!("Switching to model: {}", model_id);
+                
+                // Update settings with new model
+                let mut settings = get_settings(app);
+                settings.selected_model = model_id.to_string();
+                write_settings(app, settings);
+                
+                // Emit event to notify frontend
+                let _ = app.emit("model-changed", model_id);
+                
+                // Refresh tray menu to update checkmark
+                tray::update_tray_menu(app, &tray::TrayIconState::Idle, None);
+                
+                log::info!("Model switched to: {}", model_id);
+                return;
             }
-            "check_updates" => {
-                let settings = settings::get_settings(app);
-                if settings.update_checks_enabled {
+            
+            match event_id {
+                "settings" => {
                     show_main_window(app);
-                    let _ = app.emit("check-for-updates", ());
                 }
-            }
-            "copy_last_transcript" => {
-                tray::copy_last_transcript(app);
-            }
-            "unload_model" => {
-                let transcription_manager = app.state::<Arc<TranscriptionManager>>();
-                if !transcription_manager.is_model_loaded() {
-                    log::warn!("No model is currently loaded.");
-                    return;
+                "check_updates" => {
+                    let settings = settings::get_settings(app);
+                    if settings.update_checks_enabled {
+                        show_main_window(app);
+                        let _ = app.emit("check-for-updates", ());
+                    }
                 }
-                match transcription_manager.unload_model() {
-                    Ok(()) => log::info!("Model unloaded via tray."),
-                    Err(e) => log::error!("Failed to unload model via tray: {}", e),
+                "copy_last_transcript" => {
+                    tray::copy_last_transcript(app);
                 }
-            }
-            "cancel" => {
-                use crate::utils::cancel_current_operation;
+                "unload_model" => {
+                    let transcription_manager = app.state::<Arc<TranscriptionManager>>();
+                    if !transcription_manager.is_model_loaded() {
+                        log::warn!("No model is currently loaded.");
+                        return;
+                    }
+                    match transcription_manager.unload_model() {
+                        Ok(()) => log::info!("Model unloaded via tray."),
+                        Err(e) => log::error!("Failed to unload model via tray: {}", e),
+                    }
+                }
+                "cancel" => {
+                    use crate::utils::cancel_current_operation;
 
-                // Use centralized cancellation that handles all operations
-                cancel_current_operation(app);
+                    // Use centralized cancellation that handles all operations
+                    cancel_current_operation(app);
+                }
+                "quit" => {
+                    app.exit(0);
+                }
+                _ => {}
             }
-            "quit" => {
-                app.exit(0);
-            }
-            _ => {}
         })
         .build(app_handle)
         .unwrap();
