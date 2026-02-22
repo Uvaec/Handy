@@ -1,11 +1,12 @@
 use crate::managers::history::{HistoryEntry, HistoryManager};
+use crate::managers::model::ModelManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings;
 use crate::tray_i18n::get_tray_translations;
 use log::{error, info, warn};
 use std::sync::Arc;
 use tauri::image::Image;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIcon;
 use tauri::{AppHandle, Manager, Theme};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -158,26 +159,91 @@ pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&
             )
             .expect("failed to create menu")
         }
-        TrayIconState::Idle => Menu::with_items(
-            app,
-            &[
-                &version_i,
-                &separator(),
-                &copy_last_transcript_i,
-                &unload_model_i,
-                &separator(),
-                &settings_i,
-                &check_updates_i,
-                &separator(),
-                &quit_i,
-            ],
-        )
-        .expect("failed to create menu"),
+        TrayIconState::Idle => {
+            // Create Model submenu with downloaded models
+            let model_submenu = create_model_submenu(app, &strings.model);
+
+            Menu::with_items(
+                app,
+                &[
+                    &version_i,
+                    &separator(),
+                    &copy_last_transcript_i,
+                    &unload_model_i,
+                    &model_submenu,
+                    &separator(),
+                    &settings_i,
+                    &check_updates_i,
+                    &separator(),
+                    &quit_i,
+                ],
+            )
+            .expect("failed to create menu")
+        }
     };
 
     let tray = app.state::<TrayIcon>();
     let _ = tray.set_menu(Some(menu));
     let _ = tray.set_icon_as_template(true);
+}
+
+/// Creates the Model submenu with all downloaded models
+fn create_model_submenu(app: &AppHandle, menu_label: &str) -> Submenu<tauri::Wry> {
+    let model_manager = app.state::<Arc<ModelManager>>();
+    let settings = settings::get_settings(app);
+    let current_model = &settings.selected_model;
+
+    // Get all available models and filter for downloaded ones
+    let available_models = model_manager.get_available_models();
+    let downloaded_models: Vec<_> = available_models
+        .into_iter()
+        .filter(|m| m.is_downloaded)
+        .collect();
+
+    let mut model_items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = Vec::new();
+
+    if downloaded_models.is_empty() {
+        // No models available - show disabled placeholder
+        let no_models_item = MenuItem::with_id(
+            app,
+            "no_models",
+            "No models available",
+            false,
+            None::<&str>,
+        )
+        .expect("failed to create no models item");
+        model_items.push(Box::new(no_models_item));
+    } else {
+        // Add each downloaded model as a menu item
+        for model in downloaded_models {
+            let is_current = &model.id == current_model;
+            let display_name = if is_current {
+                format!("✓ {}", model.name)
+            } else {
+                model.name.clone()
+            };
+
+            let model_item = MenuItem::with_id(
+                app,
+                &format!("model_switch_{}", model.id),
+                &display_name,
+                true,
+                None::<&str>,
+            )
+            .expect("failed to create model item");
+            model_items.push(Box::new(model_item));
+        }
+    }
+
+    // Build the submenu
+    let mut submenu_builder = Submenu::with_id_and_items(app, "model_submenu", menu_label, true, &[]);
+    for item in model_items {
+        submenu_builder = submenu_builder
+            .add_item(item.as_ref())
+            .expect("failed to add item to submenu");
+    }
+
+    submenu_builder.build().expect("failed to build submenu")
 }
 
 fn last_transcript_text(entry: &HistoryEntry) -> &str {
