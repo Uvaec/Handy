@@ -200,7 +200,8 @@ fn create_model_submenu(app: &AppHandle, menu_label: &str) -> Submenu<tauri::Wry
         .filter(|m| m.is_downloaded)
         .collect();
 
-    let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = Vec::new();
+    // Create vector to hold owned menu items so they live long enough
+    let mut menu_items: Vec<MenuItem<tauri::Wry>> = Vec::new();
 
     if downloaded_models.is_empty() {
         // No models available - show disabled placeholder
@@ -212,16 +213,10 @@ fn create_model_submenu(app: &AppHandle, menu_label: &str) -> Submenu<tauri::Wry
             None::<&str>,
         )
         .expect("failed to create no models item");
-        items.push(&no_models_item);
-        
-        return Submenu::with_id_and_items(app, "model_submenu", menu_label, true, &items)
-            .expect("failed to build submenu");
-    }
-
-    // Add each downloaded model as a menu item
-    let model_items: Vec<_> = downloaded_models
-        .iter()
-        .map(|model| {
+        menu_items.push(no_models_item);
+    } else {
+        // Add each downloaded model as a menu item
+        for model in downloaded_models {
             let is_current = &model.id == current_model;
             let display_name = if is_current {
                 format!("✓ {}", model.name)
@@ -229,23 +224,25 @@ fn create_model_submenu(app: &AppHandle, menu_label: &str) -> Submenu<tauri::Wry
                 model.name.clone()
             };
 
-            MenuItem::with_id(
+            let model_item = MenuItem::with_id(
                 app,
                 &format!("model_switch_{}", model.id),
                 &display_name,
                 true,
                 None::<&str>,
             )
-            .expect("failed to create model item")
-        })
-        .collect();
-
-    // Collect references to the items
-    for item in &model_items {
-        items.push(item);
+            .expect("failed to create model item");
+            menu_items.push(model_item);
+        }
     }
 
-    Submenu::with_id_and_items(app, "model_submenu", menu_label, true, &items)
+    // Convert to vector of references for Submenu::with_id_and_items
+    let item_refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = menu_items
+        .iter()
+        .map(|item| item as &dyn tauri::menu::IsMenuItem<tauri::Wry>)
+        .collect();
+
+    Submenu::with_id_and_items(app, "model_submenu", menu_label, true, &item_refs)
         .expect("failed to build submenu")
 }
 
