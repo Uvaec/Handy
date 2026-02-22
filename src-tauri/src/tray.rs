@@ -200,7 +200,7 @@ fn create_model_submenu(app: &AppHandle, menu_label: &str) -> Submenu<tauri::Wry
         .filter(|m| m.is_downloaded)
         .collect();
 
-    let mut model_items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = Vec::new();
+    let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = Vec::new();
 
     if downloaded_models.is_empty() {
         // No models available - show disabled placeholder
@@ -212,10 +212,16 @@ fn create_model_submenu(app: &AppHandle, menu_label: &str) -> Submenu<tauri::Wry
             None::<&str>,
         )
         .expect("failed to create no models item");
-        model_items.push(Box::new(no_models_item));
-    } else {
-        // Add each downloaded model as a menu item
-        for model in downloaded_models {
+        items.push(&no_models_item);
+        
+        return Submenu::with_id_and_items(app, "model_submenu", menu_label, true, &items)
+            .expect("failed to build submenu");
+    }
+
+    // Add each downloaded model as a menu item
+    let model_items: Vec<_> = downloaded_models
+        .iter()
+        .map(|model| {
             let is_current = &model.id == current_model;
             let display_name = if is_current {
                 format!("✓ {}", model.name)
@@ -223,27 +229,24 @@ fn create_model_submenu(app: &AppHandle, menu_label: &str) -> Submenu<tauri::Wry
                 model.name.clone()
             };
 
-            let model_item = MenuItem::with_id(
+            MenuItem::with_id(
                 app,
                 &format!("model_switch_{}", model.id),
                 &display_name,
                 true,
                 None::<&str>,
             )
-            .expect("failed to create model item");
-            model_items.push(Box::new(model_item));
-        }
+            .expect("failed to create model item")
+        })
+        .collect();
+
+    // Collect references to the items
+    for item in &model_items {
+        items.push(item);
     }
 
-    // Build the submenu
-    let mut submenu_builder = Submenu::with_id_and_items(app, "model_submenu", menu_label, true, &[]);
-    for item in model_items {
-        submenu_builder = submenu_builder
-            .add_item(item.as_ref())
-            .expect("failed to add item to submenu");
-    }
-
-    submenu_builder.build().expect("failed to build submenu")
+    Submenu::with_id_and_items(app, "model_submenu", menu_label, true, &items)
+        .expect("failed to build submenu")
 }
 
 fn last_transcript_text(entry: &HistoryEntry) -> &str {
